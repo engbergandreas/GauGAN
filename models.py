@@ -18,14 +18,14 @@ class EncoderBlock(nn.Module):
         kw = 3 #kernel width
         pw = int(np.ceil((kw - 1.0) / 2)) #padding should be half the size of kernel
 
-        if with_norm:
+        if with_norm: #TODO add spectral normalization, remove bias on conv2d as it has no effect after normalization 
             self.block = nn.Sequential(
                                         nn.Conv2d(in_channels=in_channels,out_channels=out_channels,\
                                             kernel_size=kw,stride=2,padding=pw),           
                                         nn.InstanceNorm2d(out_channels),
                                         nn.LeakyReLU(0.2)
                                         )
-        else:
+        else: #TODO remove as all layers has normalization?
             self.block = nn.Sequential(
                                         nn.Conv2d(in_channels=in_channels,out_channels=out_channels,\
                                                     kernel_size=kw,stride=2,padding=pw),
@@ -86,7 +86,7 @@ class Encoder(nn.Module) :
         std = torch.exp(logvar * 0.5) #sort of sqrt variance (?)
         epsilon = torch.rand_like(std)
 
-        return mu + std * epsilon
+        return std * epsilon + mu
 
         # print(np.shape(x))
 
@@ -108,7 +108,6 @@ class Encoder(nn.Module) :
 class SPADE(nn.Module):
     def __init__(self, num_channels):
         super().__init__()
-        #NUM_CLASSES = 10
         nHiddenChannels = 128
 
         self.bn = nn.BatchNorm2d(num_channels, affine=False)
@@ -122,13 +121,12 @@ class SPADE(nn.Module):
     def forward(self, x, segmap):
         normalized = self.bn(x)
 
-        #resize segmap TODO
         segmap = F.interpolate(segmap, size=x.size()[2:], mode='nearest')
         activation = self.block1(segmap)
         gamma = self.conv_gamma(activation)
         beta = self.conv_beta(activation)
 
-        out = normalized * gamma + beta
+        out = normalized * gamma + beta #TODO (1 + gamma)
 
         return out
 
@@ -137,20 +135,21 @@ class SPADEResnetBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.shortcut = (in_channels != out_channels)
-        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=3, stride=1, padding=1)
+        #TODO create feature middle (?) ie. fmiddle = min(fin, fout) does not seem necessary 
+        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=3, stride=1, padding=1)#TODO this would be fmiddle as out
+        self.conv2 = nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=3, stride=1, padding=1)#TODO this would be fmiddle as in
         if self.shortcut:
             self.conv_skip = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=3, stride=1, padding=1)
+            #TODO is actually a conv2d(in, out, ks = 1, bias=False)
 
         #Applys spectral normalization to all convolutional layers
         self.conv1 = spectral_norm(self.conv1)
         self.conv2 = spectral_norm(self.conv2)
-
         if self.shortcut:
             self.conv_skip = spectral_norm(self.conv_skip)
-
+        #Normalization layers
         self.spade1 = SPADE(num_channels=in_channels)
-        self.spade2 = SPADE(num_channels=out_channels)
+        self.spade2 = SPADE(num_channels=out_channels)#TODO this would be fmiddle 
 
         if self.shortcut:
             self.spade_skip = SPADE(num_channels=in_channels)
@@ -177,7 +176,7 @@ class SPADEResnetBlock(nn.Module):
     def compute_shortcut(self, x, segmap):
         if self.shortcut:
             x_s = self.spade_skip(x, segmap)
-            x_s = F.leaky_relu(x_s, 0.2)
+            x_s = F.leaky_relu(x_s, 0.2)#TODO remove? in paper this is here
             x_s = self.conv_skip(x_s)
         else:
             x_s = x
@@ -210,7 +209,9 @@ class Generator(nn.Module):
         x = self.block1(x, segmap)
         x = self.upsample(x) 
         x = self.block2(x, segmap)
-        x = self.upsample(x)
+
+        x = self.upsample(x) #TODO to be removed? in paper this is here
+        
         x = self.block3(x, segmap)
         x = self.upsample(x)
         x = self.block4(x, segmap)
@@ -232,15 +233,16 @@ class Generator(nn.Module):
 class DiscriminatorBlock(nn.Module):
     def __init__(self, in_channels, out_channels, normalization=True):
         super().__init__()
+        #TODO set bias to false in conv2d see reason in encoder
         if normalization:
             self.block = nn.Sequential(
-                spectral_norm(nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=4, stride=2, padding=1)),
+                spectral_norm(nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=4, stride=2, padding=1)), #TODO they use padding = 2, bias = false?
                 nn.InstanceNorm2d(out_channels),
                 nn.LeakyReLU(0.2),
             )
         else:
             self.block = nn.Sequential(
-                spectral_norm(nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=4, stride=2, padding=1)),
+                spectral_norm(nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=4, stride=2, padding=1)), #TODO they use padding = 2, bias = false?
                 nn.LeakyReLU(0.2),
             )
     def forward(self, x):
@@ -254,7 +256,7 @@ class Discriminator(nn.Module):
         self.block2 = DiscriminatorBlock(64, 128)
         self.block3 = DiscriminatorBlock(128, 256)
         self.block4 = DiscriminatorBlock(256, 512)
-        self.block5 = spectral_norm(nn.Conv2d(512, 1, kernel_size=4, stride=1, padding=1)) 
+        self.block5 = spectral_norm(nn.Conv2d(512, 1, kernel_size=4, stride=1, padding=1)) #TODO padding = 2?
         #DiscriminatorBlock(512, 1, False)
 
     def forward(self, x, segmap): 
@@ -268,7 +270,7 @@ class Discriminator(nn.Module):
         res = self.block4(res)
         res = self.block5(res) 
         #Maybe add leaky relu here as last layer, even though it is not stated in the paper
-        return res
+        return res #TODO maybe return an array from each output of the different blocks, 
 
 
 # VGG architecter, used for the perceptual loss using a pretrained VGG network, source: https://github.com/NVlabs/SPADE
