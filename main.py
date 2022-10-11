@@ -5,45 +5,15 @@ import numpy as np
 import models
 import loss
 import settings
+import utils
+
+from datetime import datetime
+
 #dataset
 import dataset
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 import torchvision.transforms as transforms
 from PIL import Image
-
-def plotImages(fake, real, label):
-    import matplotlib.pyplot as plt
-    fakeimg = (np.asarray(fake).transpose(1,2,0) + 1) / 2.0
-    realimg = (np.asarray(real).transpose(1,2,0) + 1) / 2.0
-    labelimg = np.asarray(label).transpose(1,2,0)
-
-    fig, plot = plt.subplots(1,3)
-    plot[0].imshow(fakeimg)
-    plot[0].set_title("fake")
-    plot[1].imshow(realimg)
-    plot[1].set_title("real")
-    plot[2].imshow(labelimg)
-    plot[2].set_title("seg map")
-
-    plt.show()
-
-
-def plotImage(img):
-    import matplotlib.pyplot as plt
-    print(np.shape(img))
-    image = np.asarray(img).transpose(1,2,0)
-    print(np.min(image))
-
-    print(np.shape(image))
-    plt.imshow(image)
-    plt.show()
-
-def plotLabel(label):
-    import matplotlib.pyplot as plt
-    #print(np.shape(image))
-    image = np.asarray(label).transpose(1,2,0)
-    plt.imshow(image)
-    plt.show()
 
 def preprocess_input(data):
     if torch.cuda.is_available():
@@ -60,50 +30,117 @@ def preprocess_input(data):
 
     return input_semantics, data['image'], label_map
 
-def testGauGAN(dataloader, encoder: models.Encoder, generator: models.Generator, discriminator: models.Discriminator):
+def divide_prediction(pred):
+    fake = []
+    real = []
+    for p in pred:
+        fake.append(p[:p.size(0) // 2]) #first half are the fake predictions
+        real.append(p[p.size(0) // 2:]) #second half are the real predictions
+        
+    return fake, real
+
+def generate_fake(real_image, seg_map, compute_KLD = False):
+    mu, var = encoder(real_image)
+    latent_vec = encoder.compute_latent_vec(mu, var)
+    fake_image = generator(latent_vec=latent_vec, segmap=seg_map)
+
+    kld_loss_batch = None
+    if compute_KLD:
+        kld_loss_batch = kld_loss(mu, var)  #ok
+
+    return fake_image, kld_loss_batch
+
+def discriminate(fake_image, real_image, seg_map):
+    #TODO feed real and fake image at the same time to the discriminator, check pixp2pix_model.py line 209
+    #the first half of the output is for the fake pred, the second half is the real output. 
+            # In Batch Normalization, the fake and real images are
+            # recommended to be in the same batch to avoid disparate
+            # statistics in fake and real images.
+            # So both fake and real images are fed to D all at once.
+    fake_concat = torch.concat([fake_image, seg_map], dim=1)
+    real_concat = torch.concat([real_image, seg_map], dim=1)
+    fake_and_real_image = torch.concat([fake_concat, real_concat], dim=0)
+
+    intermediate_predictions = discriminator(fake_and_real_image)
+
+    #list of intermediate predictions from each layer of the discriminator
+    pred_fake, pred_real =  divide_prediction(intermediate_predictions)
+
+    return pred_fake, pred_real
+
+def compute_generator_loss(real_image, seg_map):
+    fake_image, kld_loss_batch = generate_fake(real_image, seg_map, compute_KLD=True)
+
+    pred_fake, pred_real = discriminate(fake_image, real_image, seg_map)
+
+    gen_loss_batch = gen_loss(pred_fake[-1]) #Take the last prediction of the discriminator and compute generator loss
+    vgg_loss_batch = vgg_loss(real_image, fake_image)#OK
+    #Exclude last item as it is the final prediction, only cound intermediate predictions
+    feat_loss_batch = feat_loss(pred_real[:-1], pred_fake[:-1]) #TODO check if last item should be included in the feat losscompare pix2pix_model.py line 151
+    #kld_loss_batch = kld_loss(mu, var)  #ok
+    
+    #kld loss lambda = 0.05
+    #feat loss lampa = 10 - OK
+    #vgg loss lambda = 10
+    #TODO sum and mean? 
+    generator_loss = gen_loss_batch + \
+        kld_loss_batch * 0.05 + \
+        vgg_loss_batch * 10 + \
+        feat_loss_batch * 10
+
+    return generator_loss
+
+def compute_discriminator_loss(real_image, seg_map):
+    with torch.no_grad(): 
+        fake_image, _ = generate_fake(real_image, seg_map)
+        fake_image.detach()
+        fake_image.requires_grad_()
+    #TODO compute prediction in one batch as described above
+    
+    pred_fake_d, pred_real_d = discriminate(fake_image, real_image.detach(), seg_map)
+    #TODO compare against hinge loss computed as described above 
+    #TODO check gen_loss => hinge loss
+    #compute hinge loss as: 
+
+    #minval = torch.min(input - 1, self.get_zero_tensor(input)) #function call can be found in loss.py line 51
+    #loss = -torch.mean(minval)
+
+    #if target is not real compute as torch.min(-input - 1, ...) ...
+    # # real_disc_loss = disc_loss(pred_real_d[-1], True)
+    # # fake_disc_loss = disc_loss(pred_fake_d[-1], False)
+    # # d_loss = real_disc_loss + fake_disc_loss
+    
+    rdl = hinge_loss(pred_real_d[-1], True)
+    fdl = hinge_loss(pred_fake_d[-1], False)
+    d_loss = rdl + fdl
+
+    return d_loss
+
+
+def validateEpoch(path, epoch):
+    print('-------- Validating image --------')
+    data = next(iter(validation_loader))
+    seg, real, label = preprocess_input(data)
     with torch.no_grad():
-        for batch_index, data in enumerate(dataloader):
-                seg_map, real_image, label = preprocess_input(data)
+        fake, _ = generate_fake(real, seg)
+        #plotImages(fake[0].cpu(), real[0].cpu(), label[0].cpu())
+        utils.saveValidationImage(fake[0].cpu(), real[0].cpu(), label[0].cpu(), path, epoch)
+    print('-------- Validation complete --------')
 
-                #test generator
-                #gen_optimizer.zero_grad()
-                mu, var = encoder(real_image)
-                latent_vec = encoder.compute_latent_vec(mu, var)
-                fake_image = generator(latent_vec=latent_vec, segmap=seg_map)
+def saveModels(filename, epoch, optional=''):
+    from pathlib import Path
 
-                fake_disc_output = discriminator(fake_image, seg_map)
-                real_disc_output = discriminator(real_image, seg_map)
+    Path('models/' + filename).mkdir(parents=True, exist_ok=True)
 
-                gen_loss_batch = gen_loss(fake_disc_output[-1])
-                kld_loss_batch = kld_loss(mu, var)
-                vgg_loss_batch = vgg_loss(real_image, fake_image)
-                feat_loss_batch = feat_loss(real_disc_output, fake_disc_output)
-
-                generator_loss = gen_loss_batch + \
-                    kld_loss_batch * 0.1 + \
-                    vgg_loss_batch * 0.1 + \
-                    feat_loss_batch * 10
-
-                #generator_loss.backward()
-                #gen_optimizer.step()
-
-                #discriminator
-                #disc_optimizer.zero_grad()
-                real_disc_output_d = discriminator(real_image.detach(), seg_map)
-                fake_disc_output_d = discriminator(fake_image.detach(), seg_map)
-                real_disc_loss = disc_loss(real_disc_output_d[-1], True) * 0.5
-                fake_disc_loss = disc_loss(fake_disc_output_d[-1], False) * 0.5
-                d_loss = real_disc_loss + fake_disc_loss
-                #d_loss.backward()
-                #disc_optimizer.step()
-                print("gen loss", generator_loss, "disc loss", d_loss)
-                plotImages(fake_image[0].detach().cpu(),real_image[0].detach().cpu(), label[0].detach().cpu())
-                #plotImage(fake_image[0].detach().cpu())
-                #plotImage(real_image[0].detach().cpu())
-                #plotLabel(seg_map[0].detach().cpu())
-
-def trainGauGAN(dataloader, encoder: models.Encoder, generator: models.Generator, discriminator: models.Discriminator, nrEpochs, filename):
-    for epoch in tqdm(range(nrEpochs + 1)):
+    print("saving models at epoch:", epoch)
+    #print("g-loss:", generator_loss.item(), "d-loss:", d_loss.item())
+    #print('g-loss: %.4f \t d-loss: %.4f \n'%(generator_loss.item(), d_loss.item()))
+    torch.save(encoder.state_dict(), 'models/' + filename + '/encoder' + optional + '.pth')
+    torch.save(generator.state_dict(), 'models/' + filename + '/generator' + optional + '.pth')
+    torch.save(discriminator.state_dict(), 'models/' + filename + '/discriminator' + optional + '.pth')
+    
+def trainGauGAN(dataloader, encoder: models.Encoder, generator: models.Generator, discriminator: models.Discriminator, nrEpochs, filename, startEpoch = 0):
+    for epoch in tqdm(range(startEpoch, startEpoch + nrEpochs)):
         for batch_index, data in enumerate(dataloader):
             #inputs, targets = inputs.cuda(), targets.cuda()
             # print("img:",np.shape(data["image"]))
@@ -114,83 +151,67 @@ def trainGauGAN(dataloader, encoder: models.Encoder, generator: models.Generator
             #print(np.shape(seg_map))
             #print(np.shape(real_image))
 
-            #train generator
+            #train generator 1 step
             gen_optimizer.zero_grad()
-            mu, var = encoder(real_image)
-            latent_vec = encoder.compute_latent_vec(mu, var)
-            fake_image = generator(latent_vec=latent_vec, segmap=seg_map)
-
-
-            #TODO feed real and fake image at the same time to the discriminator, check pixp2pix_model.py line 209
-                #the first half of the output is for the fake pred, the second half is the real output
-            fake_disc_output = discriminator(fake_image, seg_map)
-            real_disc_output = discriminator(real_image, seg_map)
-
-            #print(np.shape(fake_disc_output))
-            #print(fake_disc_output)
-
-            #print(fake_disc_output[-1])
-
-            #TODO check gen_loss => hinge loss
-            #compute hinge loss as: 
-            #input=fake_disc_output
-            #minval = torch.min(input - 1, self.get_zero_tensor(input)) #function call can be found in loss.py line 51
-            #loss = -torch.mean(minval)
-
-            #if target is not real compute as torch.min(-input - 1, ...) ...
-            gen_loss_batch = gen_loss(fake_disc_output[-1]) #TODO essentially this should be hinge
-
-            kld_loss_batch = kld_loss(mu, var)  #ok
-            vgg_loss_batch = vgg_loss(real_image, fake_image)#OK
-
-            feat_loss_batch = feat_loss(real_disc_output, fake_disc_output) #TODO check if last item should be included in the feat losscompare pix2pix_model.py line 151
-
-            #kld loss lambda = 0.05
-            #feat loss lampa = 10 - OK
-            #vgg loss lambda = 10
-            #TODO sum and mean? 
-            generator_loss = gen_loss_batch + \
-                kld_loss_batch * 0.1 + \
-                vgg_loss_batch * 0.1 + \
-                feat_loss_batch * 10
-
+            generator_loss = compute_generator_loss(real_image, seg_map)
             generator_loss.backward()
             gen_optimizer.step()
 
-            #train discriminator
+            #train discriminator 1 step
             disc_optimizer.zero_grad()
             #TODO check if we should generate new image and detach it from gpu => set requires_grad_()
             #A reason why we should generate a new image is that we have trained the generator a step so it would be performing better
             #so we should generate a new img with 
-            #with torch.no_grad(): 
-                #fake_img = generate_fake(input_seg, real_img)
-                #fake_img.detach()
-                #fake_img.requires_grad_()
-            #TODO compute prediction in one batch as described above
-            real_disc_output_d = discriminator(real_image.detach(), seg_map)
-            fake_disc_output_d = discriminator(fake_image.detach(), seg_map)
-            #TODO compare against hinge loss computed as described above 
-            real_disc_loss = disc_loss(real_disc_output_d[-1], True) * 0.5
-            fake_disc_loss = disc_loss(fake_disc_output_d[-1], False) * 0.5
-            d_loss = real_disc_loss + fake_disc_loss
+            d_loss = compute_discriminator_loss(real_image, seg_map)            
+            #print(generator_loss, d_loss, rdl+fdl)
             d_loss.backward()
             disc_optimizer.step()
 
-        # fkimg = fake_image[0].detach().cpu().permute(2,1,0)         
-        # plt.imshow(fkimg)
-        # plt.show()
         #if (epoch) % 5 == 0:
-        print("Saving at epoch:", epoch)
-        print("g-loss:", generator_loss, "d-loss:", d_loss)
-        torch.save(encoder.state_dict(), 'models/encoder' + filename + '.pth')
-        torch.save(generator.state_dict(), 'models/generator'  + filename + '.pth')
-        torch.save(discriminator.state_dict(), 'models/discriminator' + filename + '.pth')
+        #Save generator and disrciminator loss in file
+        with open('models/loss/'+filename+'.txt', 'a') as f:
+            f.write('%.4f \t %.4f \n'%(generator_loss.item(), d_loss.item()))
 
-def loadModel(encoder: models.Encoder, generator: models.Generator, discriminator: models.Discriminator = None, filename = '', _device = 'cpu'):
-    encoder.load_state_dict(torch.load('models/encoder' + filename + '.pth', map_location=_device))
-    generator.load_state_dict(torch.load('models/generator' + filename + '.pth', map_location=_device))
+        validateEpoch(filename, epoch)
+
+        #Save model
+        saveModels(filename, epoch)
+        print('last save:', datetime.now())
+
+
+        if (epoch % 5) == 0:
+            saveModels(filename, epoch, '_' + str(epoch))
+        # print("saving at epoch:", epoch)
+        # #print("g-loss:", generator_loss.item(), "d-loss:", d_loss.item())
+        # #print('g-loss: %.4f \t d-loss: %.4f \n'%(generator_loss.item(), d_loss.item()))
+        # torch.save(encoder.state_dict(), 'models/encoder' + filename + '.pth')
+        # torch.save(generator.state_dict(), 'models/generator'  + filename + '.pth')
+        # torch.save(discriminator.state_dict(), 'models/discriminator' + filename + '.pth')
+
+
+def testGauGAN(dataloader, encoder: models.Encoder, generator: models.Generator, discriminator: models.Discriminator):
+    encoder.eval()
+    generator.eval()
+    discriminator.eval()
+
+    with torch.no_grad():
+        for batch_index, data in enumerate(dataloader):
+                seg_map, real_image, label = preprocess_input(data)
+
+                fake_image, _ = generate_fake(real_image, seg_map)
+
+                #print("gen loss", generator_loss, "disc loss", d_loss)
+                utils.plotImages(fake_image[0].cpu(),real_image[0].cpu(), label[0].cpu())
+                #plotImage(fake_image[0].detach().cpu())
+                #plotImage(real_image[0].detach().cpu())
+                #plotLabel(seg_map[0].detach().cpu())
+
+
+def loadModel(encoder: models.Encoder, generator: models.Generator, discriminator: models.Discriminator = None, filename = '', optional='', _device = 'cpu'):
+    encoder.load_state_dict(torch.load('models/' + filename + '/encoder' + optional + '.pth', map_location=_device))
+    generator.load_state_dict(torch.load('models/' + filename + '/generator' + optional + '.pth', map_location=_device))
     if discriminator:
-        discriminator.load_state_dict(torch.load('models/discriminator' + filename + '.pth', map_location=_device))
+        discriminator.load_state_dict(torch.load('models/' + filename + '/discriminator' + optional + '.pth', map_location=_device))
 
 if __name__=="__main__":
 
@@ -209,11 +230,14 @@ if __name__=="__main__":
     # training_data = dataset.CamVidDataset('dataset/CamVid/train_img','dataset/CamVid/train_label', transform_train, transform_label_train )
     # test_data = dataset.CamVidDataset('dataset/CamVid/test_img','dataset/CamVid/test_label', transform_train, transform_label_train )
     
-    training_data = dataset.CamVidDataset('dataset/COCO/test_img','dataset/COCO/test_label', transform_train, transform_label_train )
-    test_data = dataset.CamVidDataset('dataset/COCO/test_img','dataset/COCO/test_label', transform_train, transform_label_train )
+    training_data = dataset.CamVidDataset('dataset/COCO/test_img','dataset/COCO/test_label', transform_train, transform_label_train)
+    test_data = dataset.CamVidDataset('dataset/COCO/test3','dataset/COCO/test3l', transform_train, transform_label_train )
 
-    train_loader = DataLoader(training_data, batch_size=4, shuffle=True, num_workers=8)
+    validation_data = Subset(training_data, [0, 2, 5])
+
+    train_loader = DataLoader(training_data, batch_size=4, shuffle=False, num_workers=1)
     test_loader = DataLoader(test_data, batch_size=1, shuffle=False, num_workers=1)
+    validation_loader = DataLoader(validation_data, batch_size=1, shuffle=False, num_workers=0)
 
     #print(torch.cuda.is_available())
 
@@ -225,10 +249,14 @@ if __name__=="__main__":
     vgg_loss = loss.VGGLoss(0).to(device)
     feat_loss = loss.FeatureLossDisc().to(device)
     disc_loss = loss.HingeLoss().to(device)
+    hinge_loss = loss.Hinge().to(device)
 
     encoder = models.Encoder()
     generator = models.Generator()
     discriminator = models.Discriminator()
+    #print(generator)
+    #print(discriminator)
+    #print(encoder)
 
     if torch.cuda.is_available():
         encoder.cuda()
@@ -239,20 +267,30 @@ if __name__=="__main__":
     #beta1 = 0, beta2 = 0.999
     genParams = list(generator.parameters())
     genParams += encoder.parameters()
-    gen_optimizer = torch.optim.Adam(genParams, lr=0.1e-4, betas=(0, 0.999)) #TODO lr=0.0002, beta1 = 0 beta = 0.9 but in paper its actually different so f this
-    disc_optimizer = torch.optim.Adam(list(discriminator.parameters()), lr=4e-4, betas=(0, 0.999))
+    gen_optimizer = torch.optim.Adam(genParams, lr=0.15e-4, betas=(0, 0.999)) #TODO lr=0.0002, beta1 = 0 beta = 0.9 but in paper its actually different so f this
+    disc_optimizer = torch.optim.Adam(list(discriminator.parameters()), lr=5e-4, betas=(0, 0.999))
 
+    #SETTINGS
+    filename = '_coco_20_'
+    version = ''
+    nr_epochs = 100
+    start_epoch = 50
+    train = False
+    load_model = True
 
-    #loadModel(encoder, generator, discriminator, '_normalize_50')
-    #loadModel(encoder, generator, discriminator, '_no_normalize_200')
-    #loadModel(encoder, generator, discriminator, '_no_normalize')
-    #loadModel(encoder, generator, discriminator, '_normalize')
-    loadModel(encoder, generator, discriminator, '_coco_50')
+    if load_model:
+        loadModel(encoder, generator, discriminator, filename, optional=version, _device=device)
 
     #TODO initalize weights - uses default initialization rn 
 
-    testGauGAN(test_loader, encoder, generator, discriminator)
-    #trainGauGAN(train_loader, encoder, generator, discriminator, 50, '_coco_test')
-    #import time
+    if train:
+        trainGauGAN(train_loader, encoder, generator, discriminator, nr_epochs, filename, start_epoch)
+    else:
+        testGauGAN(test_loader, encoder, generator, discriminator)
+
+    utils.plotLoss(filename)
+
+
+
 
 
