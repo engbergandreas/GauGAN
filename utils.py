@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
+from random import random
 
 def plotLoss(filename):
     with open('models/loss/' + filename + '.txt') as f:
@@ -49,3 +50,13 @@ def saveValidationImage(fake, real, label, path, epoch):
     plot[2].set_title("seg map")
     plt.savefig('results/' + path + '/validation_' + str(epoch) + '_.png', bbox_inches='tight')
     plt.close()
+
+
+#create dictionary of 255 unique random colors
+def createRandomColors():
+    with open('colormapping.txt','a') as file:
+        for i in range(256):
+            r = int(random() * 255)
+            g = int(random() * 255)
+            b = int(random() * 255)
+            file.write(str(r) + ' ' + str(g) + ' ' + str(b) + '\n')
