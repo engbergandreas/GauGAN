@@ -10,7 +10,7 @@ import settings
 from main import loadModel, generate_fake
 import utils
 
-# utils.createRandomColors() 
+#utils.createRandomColors() 
 
 def rgb_to_hex(r,g,b):
     return '#%02x%02x%02x' % (r,g,b)
@@ -88,7 +88,9 @@ def getSegmentationColors(path):
 def generateFakeImageFromCanvas(segmap, stylepath): 
     style_image = Image.open(stylepath)
     style_image_tensor = transform_image(style_image).unsqueeze(0).to(device) #create a batch of 1 image
-
+    encoder.eval()
+    generator.eval()
+    
     with torch.no_grad():
         mu, var = encoder(style_image_tensor)
         z = encoder.compute_latent_vec(mu, var)
@@ -127,6 +129,10 @@ materials = getSegmentationColors('dataset/COCO/label_colors_shorter.txt')
 encoder = Encoder()
 generator = Generator()
 
+if torch.cuda.is_available():
+    encoder.cuda()
+    generator.cuda()
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 filename = '_coco_20_'
 version = '_165'
@@ -147,9 +153,9 @@ transform_upscale = transforms.Resize((settings.IMG_HEIHGT * scale,settings.IMG_
 
 styles = {
     'style1': 'dataset/FlickrLandScapes/test.jpg', 
-    'style2': 'dataset/COCO/test_images/000000016451.jpg',
+    'style2': 'dataset/COCO/test_img/000000016451.jpg',
     'giraff': 'dataset/COCO/test3/000000000025.jpg',
-    'water': 'dataset/COCO/test_images/000000007511.jpg',
+    'water': 'dataset/COCO/test_img/000000007511.jpg',
 }
 
 #Sidebar settings
@@ -195,6 +201,8 @@ with c2:
         bwLabel = createBWLabel(canvas_result.image_data)
         #TODO maybe move to correct device
         label_tensor = transform_label(bwLabel).long().unsqueeze(0)
+        if torch.cuda.is_available():
+            label_tensor = label_tensor.cuda()
         #Create one hot label map
         bs, _, h, w = label_tensor.size()
         nc = settings.NUM_CLASSES
@@ -207,5 +215,5 @@ with c2:
         else:
             fakeimg = generateFakeImageFromCanvas(segmap, stylePath)[0]
         #Compensate for mean and std 
-        img = (np.asarray(fakeimg).transpose(1,2,0) + 1) / 2.0
+        img = (np.asarray(fakeimg.cpu()).transpose(1,2,0) + 1) / 2.0
         st.image(img)

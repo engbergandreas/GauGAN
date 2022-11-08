@@ -119,12 +119,19 @@ def compute_discriminator_loss(real_image, seg_map):
 
 def validateEpoch(path, epoch):
     print('-------- Validating image --------')
+    encoder.eval()
+    generator.eval()
+    discriminator.eval()
     data = next(iter(validation_loader))
     seg, real, label = preprocess_input(data)
     with torch.no_grad():
         fake, _ = generate_fake(real, seg)
         #plotImages(fake[0].cpu(), real[0].cpu(), label[0].cpu())
         utils.saveValidationImage(fake[0].cpu(), real[0].cpu(), label[0].cpu(), path, epoch)
+    
+    encoder.train()
+    generator.train()
+    discriminator.train()
     print('-------- Validation complete --------')
 
 def saveModels(filename, epoch, optional=''):
@@ -193,13 +200,16 @@ def testGauGAN(dataloader, encoder: models.Encoder, generator: models.Generator,
     encoder.eval()
     generator.eval()
     discriminator.eval()
+    import os
+    spadepaths = os.listdir('dataset/COCO/SPADE')
+    paths = [os.path.join('dataset/COCO/SPADE', x) for x in spadepaths]
 
     with torch.no_grad():
         for batch_index, data in enumerate(dataloader):
                 seg_map, real_image, label = preprocess_input(data)
 
                 fake_image, _ = generate_fake(real_image, seg_map)
-
+                #spadeimg = Image.open(paths[batch_index])
                 #print("gen loss", generator_loss, "disc loss", d_loss)
                 utils.plotImages(fake_image[0].cpu(),real_image[0].cpu(), label[0].cpu())
                 #plotImage(fake_image[0].detach().cpu())
@@ -267,14 +277,14 @@ if __name__=="__main__":
     #beta1 = 0, beta2 = 0.999
     genParams = list(generator.parameters())
     genParams += encoder.parameters()
-    gen_optimizer = torch.optim.Adam(genParams, lr=0.15e-4, betas=(0, 0.999)) #TODO lr=0.0002, beta1 = 0 beta = 0.9 but in paper its actually different so f this
-    disc_optimizer = torch.optim.Adam(list(discriminator.parameters()), lr=5e-4, betas=(0, 0.999))
+    gen_optimizer = torch.optim.Adam(genParams, lr=0.10e-4, betas=(0, 0.999)) #TODO lr=0.0002, beta1 = 0 beta = 0.9 but in paper its actually different so f this
+    disc_optimizer = torch.optim.Adam(list(discriminator.parameters()), lr=4e-4, betas=(0, 0.999))
 
     #SETTINGS
     filename = '_coco_20_'
     version = ''
     nr_epochs = 100
-    start_epoch = 50
+    start_epoch = 165
     train = False
     load_model = True
 
@@ -289,8 +299,3 @@ if __name__=="__main__":
         testGauGAN(test_loader, encoder, generator, discriminator)
 
     utils.plotLoss(filename)
-
-
-
-
-

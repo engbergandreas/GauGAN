@@ -20,7 +20,7 @@ class KLD_loss(nn.Module):
     def forward(self, mu, logvar):
         return -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
-# feature_loss: loss between real desc output and fake desc output, essentially counts the number of correct guesses
+# feature_loss: loss between real desc output and fake desc output, 
 class FeatureLossDisc(nn.Module):
     def forward(self, real_disc_outputs, fake_disc_outputs):
         loss = 0

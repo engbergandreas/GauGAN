@@ -22,18 +22,33 @@ def plotLoss(filename):
         plt.grid(True)
         plt.show()
 
-def plotImages(fake, real, label):
+def plotImages(fake, real, label, spade=None, number=None):
     fakeimg = (np.asarray(fake).transpose(1,2,0) + 1) / 2.0
     realimg = (np.asarray(real).transpose(1,2,0) + 1) / 2.0
     labelimg = np.asarray(label).transpose(1,2,0)
 
-    fig, plot = plt.subplots(1,3)
-    plot[0].imshow(fakeimg)
-    plot[0].set_title("fake")
+    if(spade):
+        fig, plot = plt.subplots(1,4)
+        plot[3].axis('off')
+        plot[3].set_title('Nvidia')
+        plot[3].imshow(spade)
+    else:
+        fig, plot = plt.subplots(1,3)
+
+    plot[0].axis('off')
+    plot[1].axis('off')
+    plot[2].axis('off')
+
+    plot[0].set_title("Input label")
+    plot[1].set_title("Real image")
+    plot[2].set_title("Synthesized")
+    
+    plot[0].imshow(labelimg)
     plot[1].imshow(realimg)
-    plot[1].set_title("real")
-    plot[2].imshow(labelimg)
-    plot[2].set_title("seg map")
+    plot[2].imshow(fakeimg)
+
+    if number:
+        plt.savefig('result_' + str(number) + '_.png', bbox_inches='tight')
     plt.show()
     
 def saveValidationImage(fake, real, label, path, epoch):
