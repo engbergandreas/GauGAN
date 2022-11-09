@@ -155,10 +155,9 @@ scale = 2
 transform_upscale = transforms.Resize((settings.IMG_HEIHGT * scale,settings.IMG_WIDTH * scale))
 
 styles = {
-    'style1': 'dataset/FlickrLandScapes/test.jpg', 
-    'style2': 'dataset/COCO/test_img/000000016451.jpg',
-    'giraff': 'dataset/COCO/test3/000000000025.jpg',
-    'water': 'dataset/COCO/test_img/000000007511.jpg',
+    'style2': '000000016451.jpg',
+    'giraff': '000000000025.jpg',
+    'water': '000000007511.jpg',
 }
 
 #Sidebar settings
