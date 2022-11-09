@@ -135,8 +135,11 @@ if torch.cuda.is_available():
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 filename = '_coco_20_'
-version = '_165'
-loadModel(encoder, generator, filename=filename, optional=version, _device=device)
+version = ''
+#loadModel(encoder, generator, filename=filename, optional=version, _device=device)
+
+encoder.load_state_dict(torch.load('encoder.pth', map_location=device))
+generator.load_state_dict(torch.load('generator.pth', map_location=device))
 
 transform_image = transforms.Compose([
         transforms.Resize((settings.IMG_HEIHGT,settings.IMG_WIDTH)),
