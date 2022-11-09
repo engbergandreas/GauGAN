@@ -1,10 +1,21 @@
+1 person
 19 horse
 22 elephant
 24 zebra
 25 giraffe
+52 banana
+53 apple
+57 carrot
+62 chair
+64 potted plant
+67 dining table
+69 desk
+96 building-other
 124 grass
 135 mountain
 154 sand
 155 sea
 157 sky-other
+158 skyscraper
+159 snow
 169 tree

@@ -1,17 +1,18 @@
 import streamlit as st
 from PIL import Image
-import pandas as pd
 from streamlit_drawable_canvas import st_canvas
 from models import Encoder, Generator
 import numpy as np
 from torchvision.transforms import transforms
 import torch
 import settings
-from main import loadModel, generate_fake
-import utils
 
 #utils.createRandomColors() 
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+
+#Utility helper functions to transform colors 
 def rgb_to_hex(r,g,b):
     return '#%02x%02x%02x' % (r,g,b)
 
@@ -20,6 +21,18 @@ def hex_to_rgb(hex):
     hlen = len(hex)
     return tuple(int(hex[i:i+hlen//3], 16) for i in range(0, hlen, hlen//3))
 
+def int_to_rgb(i):
+    return colormapping[i]
+
+def rgb_to_int(r,g,b):
+    for i in range(len(colormapping)):
+        if (int_to_rgb(i) == (r,g,b)).all():
+            return i
+
+    return -1
+
+#Create a mapping between integer and a random generated color
+@st.cache()
 def getColorMapping():  
     colormaps = {}
     with open('colormapping.txt', "r") as file:
@@ -56,29 +69,21 @@ def getColorMapping():
 #             materials[label_names[index]] = rgb_to_hex(colors[index][0], colors[index][1], colors[index][2])
 #         return materials
 
-def int_to_rgb(i):
-    return colormapping[i]
 
-def rgb_to_int(r,g,b):
-    for i in range(len(colormapping)):
-        if (int_to_rgb(i) == (r,g,b)).all():
-            return i
-
-    return -1
-
+#Create dictionary of name and corresponding color in hex from file at path
+@st.cache()
 def getSegmentationColors(path):
     with open(path, "r") as file:
         label_colors = file.read().split("\n")[:-1]
         label_colors = [x.split(" ", 1) for x in label_colors]
         label_names = [x[-1] for x in label_colors] #get label names
-        #st.write(label_names)
         colors = [x[0] for x in label_colors] #get colors
-        #st.write(colors)
-        #x - 1 beacuse gray scale values are shifted 1 step 
+        #x - 1 beacuse gray scale values are shifted 1 step refer: COCO-Stuff documentation
         colors = [int_to_rgb(int(x) - 1) for x in colors] #split colors into rgb values
 
-        colors = np.array(colors) 
-                
+        colors = np.array(colors)
+        
+        #Store name and corresponding color as hex dict
         materials = {}
         for index in range(len(colors)): 
             materials[label_names[index]] = rgb_to_hex(colors[index][0], colors[index][1], colors[index][2])
@@ -96,7 +101,6 @@ def generateFakeImageFromCanvas(segmap, stylepath):
         z = encoder.compute_latent_vec(mu, var)
         fake_image = generator(latent_vec=z, segmap=segmap)
 
-    #TODO rescale fake image to compensate mean and std? 
     return fake_image
 
 def createBWLabel(img):
@@ -121,14 +125,6 @@ def createBWLabel(img):
         
         modified_annotation += mask
     return modified_annotation
-    
-#materials = getSegmentationColors("dataset/CamVid/label_colors.txt")
-colormapping = getColorMapping()
-materials = getSegmentationColors('label_colors_shorter.txt')
-
-
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
 
 @st.cache(hash_funcs={"UnhashableClass": lambda _: None})
 def load_model():
@@ -139,30 +135,20 @@ def load_model():
         encoder.cuda()
         generator.cuda()
 
-    filename = '_coco_20_'
-    version = ''
-
     encoder.load_state_dict(torch.load('encoder.pth', map_location=device))
     generator.load_state_dict(torch.load('generator.pth', map_location=device))
 
-    return encoder, generator
-#loadModel(encoder, generator, filename=filename, optional=version, _device=device)
+    return encoder, generator   
 
-# @st.cache(hash_funcs={"MyUnhashableClass": lambda _: None})
-# def load_model(encoder, generator):
-#     encoder.load_state_dict(torch.load('encoder.pth', map_location=device))
-#     generator.load_state_dict(torch.load('generator.pth', map_location=device))
 
-# load_model(encoder, generator)
+colormapping = getColorMapping()
+materials = getSegmentationColors('label_colors_shorter.txt')
 encoder, generator = load_model()
-# encoder.load_state_dict(torch.load('encoder.pth', map_location=device))
-# generator.load_state_dict(torch.load('generator.pth', map_location=device))
 
 transform_image = transforms.Compose([
         transforms.Resize((settings.IMG_HEIHGT,settings.IMG_WIDTH)),
         transforms.ToTensor(),
         transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5))
-        #transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     ])
 transform_label = transforms.Compose([
     transforms.ToTensor()
@@ -171,10 +157,12 @@ transform_label = transforms.Compose([
 scale = 2
 transform_upscale = transforms.Resize((settings.IMG_HEIHGT * scale,settings.IMG_WIDTH * scale))
 
+#Style transfer images
 styles = {
-    'style2': '000000016451.jpg',
-    'giraff': '000000000025.jpg',
-    'water': '000000007511.jpg',
+    'Baseball': '000000153797.jpg',
+    'Giraffe': '000000000025.jpg',
+    'Snow': '000000080273.jpg',
+    'Water': '000000082715.jpg'
 }
 
 #Sidebar settings
@@ -182,11 +170,8 @@ material = st.sidebar.radio('material', materials.keys(), horizontal=True)
 drawing_mode = st.sidebar.selectbox(
     "Drawing tool:", ("freedraw", "transform")
     )
-stroke_width = st.sidebar.slider("Stroke width: ", 1, 50, 30)
-#stroke_color = st.sidebar.color_picker("Stroke color hex: ")
-#bg_color = st.sidebar.color_picker("Background color hex: ", "#eee")
-#bg_image = st.sidebar.file_uploader("Background image:", type=["png", "jpg"])
-realtime_update = st.sidebar.checkbox("Update in realtime", True)
+stroke_width = st.sidebar.slider("Stroke width: ", 1, 50, 25)
+realtime_update = st.sidebar.checkbox("Update image in realtime", True)
 upscale = st.sidebar.checkbox("Upscale", False)
 
 c1,c2 = st.sidebar.columns(2)
@@ -204,13 +189,10 @@ with c1:
         fill_color="rgba(255, 165, 0, 0.3)",  # Fixed fill color with some opacity
         stroke_width=stroke_width,
         stroke_color=stroke_color,
-        #background_color=bg_color,
-        #background_image=Image.open(bg_image) if bg_image else None,
         update_streamlit=realtime_update,
         height=256,
         width=256,
         drawing_mode=drawing_mode,
-        #point_display_radius=point_display_radius if drawing_mode == 'point' else 0,
         key="canvas"
     )
 with c2:
@@ -218,15 +200,16 @@ with c2:
         stylePath = styles[style]
         #Convert canvas to bw segmentation map
         bwLabel = createBWLabel(canvas_result.image_data)
-        #TODO maybe move to correct device
         label_tensor = transform_label(bwLabel).long().unsqueeze(0)
         if torch.cuda.is_available():
             label_tensor = label_tensor.cuda()
+
         #Create one hot label map
         bs, _, h, w = label_tensor.size()
         nc = settings.NUM_CLASSES
         input_label = torch.cuda.FloatTensor(bs, nc, h, w).zero_() if torch.cuda.is_available() else torch.FloatTensor(bs, nc, h, w).zero_()
         segmap = input_label.scatter_(1, label_tensor, 1.0)
+
         #Generate image from canvas segmentation map and style image
         if upscale:
             fakeimg = generateFakeImageFromCanvas(segmap, stylePath)
@@ -235,4 +218,5 @@ with c2:
             fakeimg = generateFakeImageFromCanvas(segmap, stylePath)[0]
         #Compensate for mean and std 
         img = (np.asarray(fakeimg.cpu()).transpose(1,2,0) + 1) / 2.0
+        #Display synthesized image
         st.image(img)
