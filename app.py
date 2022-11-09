@@ -124,7 +124,7 @@ def createBWLabel(img):
     
 #materials = getSegmentationColors("dataset/CamVid/label_colors.txt")
 colormapping = getColorMapping()
-materials = getSegmentationColors('dataset/COCO/label_colors_shorter.txt')
+materials = getSegmentationColors('label_colors_shorter.txt')
 
 encoder = Encoder()
 generator = Generator()
