@@ -126,20 +126,37 @@ def createBWLabel(img):
 colormapping = getColorMapping()
 materials = getSegmentationColors('label_colors_shorter.txt')
 
-encoder = Encoder()
-generator = Generator()
-
-if torch.cuda.is_available():
-    encoder.cuda()
-    generator.cuda()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-filename = '_coco_20_'
-version = ''
+
+
+@st.cache(hash_funcs={"UnhashableClass": lambda _: None})
+def load_model():
+    encoder = Encoder()
+    generator = Generator()
+
+    if torch.cuda.is_available():
+        encoder.cuda()
+        generator.cuda()
+
+    filename = '_coco_20_'
+    version = ''
+
+    encoder.load_state_dict(torch.load('encoder.pth', map_location=device))
+    generator.load_state_dict(torch.load('generator.pth', map_location=device))
+
+    return encoder, generator
 #loadModel(encoder, generator, filename=filename, optional=version, _device=device)
 
-encoder.load_state_dict(torch.load('encoder.pth', map_location=device))
-generator.load_state_dict(torch.load('generator.pth', map_location=device))
+# @st.cache(hash_funcs={"MyUnhashableClass": lambda _: None})
+# def load_model(encoder, generator):
+#     encoder.load_state_dict(torch.load('encoder.pth', map_location=device))
+#     generator.load_state_dict(torch.load('generator.pth', map_location=device))
+
+# load_model(encoder, generator)
+encoder, generator = load_model()
+# encoder.load_state_dict(torch.load('encoder.pth', map_location=device))
+# generator.load_state_dict(torch.load('generator.pth', map_location=device))
 
 transform_image = transforms.Compose([
         transforms.Resize((settings.IMG_HEIHGT,settings.IMG_WIDTH)),
