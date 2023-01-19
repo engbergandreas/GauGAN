@@ -28,6 +28,7 @@ Demo: https://engbergandreas-gaugan.streamlit.app/
 2. Official implementation: https://github.com/NVlabs/SPADE
 3. COCO-Stuff dataset: https://github.com/nightrome/cocostuff
 4. Streamlit drawable canvas: https://github.com/andfanilo/streamlit-drawable-canvas
+5. Read full report here: https://github.com/engbergandreas/GauGAN/blob/main/Interactive_AI_canvas_TNM095.pdf
 
 ## Results
 ![Synthesized result 1](https://github.com/engbergandreas/GauGAN/blob/main/app/result_12_.png)
