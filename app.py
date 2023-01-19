@@ -6,6 +6,8 @@ import numpy as np
 from torchvision.transforms import transforms
 import torch
 import settings
+import requests
+from io import BytesIO
 
 #utils.createRandomColors() 
 
@@ -125,8 +127,21 @@ def createBWLabel(img):
         modified_annotation += mask
     return modified_annotation
 
-@st.cache(hash_funcs={"UnhashableClass": lambda _: None})
+@st.cache(allow_output_mutation=True)
+def download_model(url):
+    modelLink = url
+    model = requests.get(modelLink).content
+    return model
+
+@st.cache(hash_funcs={"UnhashableClass": lambda _: None}, suppress_st_warning=True)
 def load_model():
+    st.header('downloading models please wait...')
+    generatorModelFile = download_model('https://dl.dropboxusercontent.com/s/6b7z97yi3q3zidu/generator.pth?dl=0')
+    generatorModel = BytesIO(generatorModelFile)
+
+    encoderModelFile = download_model('https://dl.dropboxusercontent.com/s/l3wwpklmyd6emei/encoder.pth?dl=0')
+    encoderModel = BytesIO(encoderModelFile)
+
     encoder = Encoder()
     generator = Generator()
 
@@ -134,10 +149,10 @@ def load_model():
         encoder.cuda()
         generator.cuda()
 
-    encoder.load_state_dict(torch.load('encoder.pth', map_location=device))
-    generator.load_state_dict(torch.load('generator.pth', map_location=device))
+    encoder.load_state_dict(torch.load(encoderModel, map_location=device))
+    generator.load_state_dict(torch.load(generatorModel, map_location=device))
 
-    return encoder, generator   
+    return encoder, generator 
 
 
 colormapping = getColorMapping()
